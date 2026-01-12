@@ -1,4 +1,5 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::fmt;
 
 #[derive(Parser, Debug)]
 #[command(name = "hqs")]
@@ -10,23 +11,42 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
-    #[command(about = "Capture a screenshot (grim-like)")]
+    #[command(
+        about = "Capture a screenshot (grim-like)",
+        after_help = "If output-file is '-', output to standard output.\nIf no output-file is specified, use a default timestamped filename."
+    )]
     Capture(CaptureArgs),
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy)]
+pub enum FileType {
+    Png,
+    Ppm,
+    Jpeg,
+}
+
+impl fmt::Display for FileType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            FileType::Png => "png",
+            FileType::Ppm => "ppm",
+            FileType::Jpeg => "jpeg",
+        };
+        f.write_str(s)
+    }
 }
 
 #[derive(Args, Debug)]
 pub struct CaptureArgs {
     #[arg(
         short = 's',
-        long,
         value_name = "factor",
-        help = "Set the output image scale factor (default: max)."
+        help = "Set the output image's scale factor."
     )]
-    pub scale: Option<f32>,
+    pub scale: Option<f64>,
 
     #[arg(
         short = 'g',
-        long,
         value_name = "geometry",
         help = "Set the region to capture."
     )]
@@ -34,35 +54,33 @@ pub struct CaptureArgs {
 
     #[arg(
         short = 't',
-        long,
         value_name = "png|ppm|jpeg",
-        value_parser = ["png", "ppm", "jpeg"],
+        default_value_t = FileType::Png,
         hide_possible_values = true,
-        help = "Set the output filetype. Defaults to png."
+        help = "Set the output filetype."
     )]
-    pub filetype: Option<String>,
+    pub filetype: FileType,
 
     #[arg(
         short = 'q',
-        long,
         value_name = "quality",
         value_parser = clap::value_parser!(u8).range(0..=100),
-        help = "Set the JPEG filetype quality 0-100. Defaults to 80."
+        default_value_t = 80,
+        help = "Set the JPEG filetype compression rate (0-100)."
     )]
-    pub quality: Option<u8>,
+    pub quality: u8,
 
     #[arg(
         short = 'l',
-        long,
         value_name = "level",
         value_parser = clap::value_parser!(u8).range(0..=9),
-        help = "Set the PNG filetype compression level 0-9. Defaults to 6."
+        default_value_t = 6,
+        help = "Set the PNG filetype compression level (0-9)."
     )]
-    pub level: Option<u8>,
+    pub level: u8,
 
     #[arg(
         short = 'o',
-        long,
         value_name = "output",
         help = "Set the output name to capture."
     )]
@@ -70,12 +88,14 @@ pub struct CaptureArgs {
 
     #[arg(
         short = 'T',
-        long,
         value_name = "identifier",
         help = "Set the identifier of a foreign toplevel handle to capture."
     )]
     pub toplevel: Option<String>,
 
-    #[arg(short = 'c', long, help = "Include cursors in the screenshot.")]
+    #[arg(short = 'c', help = "Include cursors in the screenshot.")]
     pub cursor: bool,
+
+    #[arg(value_name = "output-file")]
+    pub output_file: Option<String>,
 }
