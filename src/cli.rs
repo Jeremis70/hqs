@@ -17,6 +17,12 @@ pub enum Cmd {
         after_help = "If output-file is '-', output to standard output.\nIf no output-file is specified, use a default timestamped filename."
     )]
     Capture(CaptureArgs),
+
+    #[command(
+        about = "Finalize an existing image (crop, output)",
+        after_help = "If output-file is '-', output to standard output.\nIf no output-file is specified, use a default timestamped filename.\n\nExamples:\n  hqs finalize --base shot.png --crop-px 0 0 200 200 out.png\n  hqs finalize --base shot.png --crop-px 10 10 800 600 - | wl-copy -t image/png"
+    )]
+    Finalize(FinalizeArgs),
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
@@ -90,6 +96,24 @@ pub struct CaptureArgs {
 
     #[arg(short = 'c', help = "Include cursors in the screenshot.")]
     pub cursor: bool,
+
+    #[arg(value_name = "output-file")]
+    pub output_file: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct FinalizeArgs {
+    #[arg(long, value_name = "path", help = "Base image to finalize.")]
+    pub base: PathBuf,
+
+    #[arg(
+        long = "crop-px",
+        value_names = ["x", "y", "w", "h"],
+        num_args = 4,
+        required = true,
+        help = "Crop rectangle in pixels."
+    )]
+    pub crop_px: Vec<u32>,
 
     #[arg(value_name = "output-file")]
     pub output_file: Option<PathBuf>,

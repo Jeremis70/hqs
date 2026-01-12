@@ -1,8 +1,13 @@
-use crate::cli::{CaptureArgs, Cli, Cmd, FileType};
+use crate::cli::{CaptureArgs, Cli, Cmd, FileType, FinalizeArgs};
 use chrono::Local;
 use grim_rs::{Box as GrimBox, CaptureParameters, Grim};
+use image::DynamicImage;
+use image::GenericImageView;
 use std::env;
+use std::fmt;
 use std::fs;
+use std::io::IsTerminal;
+use std::io::Write;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
@@ -15,12 +20,34 @@ pub fn run(cli: Cli) -> i32 {
                 1
             }
         },
+        Cmd::Finalize(args) => match run_finalize(args) {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("Error: {err}");
+                1
+            }
+        },
     }
 }
+
+#[derive(Debug)]
+struct FinalizeError(String);
+
+impl fmt::Display for FinalizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for FinalizeError {}
 
 fn run_capture(args: CaptureArgs) -> grim_rs::Result<()> {
     let output_file = if let Some(path) = args.output_file.as_deref() {
         path.to_path_buf()
+    } else if !io::stdout().is_terminal() {
+        // Allow piping without explicitly passing "-":
+        //   hqs capture | wl-copy -t image/png
+        PathBuf::from("-")
     } else {
         generate_default_filename(args.filetype)?
     };
@@ -83,6 +110,138 @@ fn run_capture(args: CaptureArgs) -> grim_rs::Result<()> {
     };
 
     save_or_write_result(&grim, &result, &output_file, &args)
+}
+
+fn run_finalize(args: FinalizeArgs) -> Result<(), FinalizeError> {
+    let [x, y, w, h] = parse_crop_px(&args.crop_px)?;
+
+    let base = image::open(&args.base).map_err(|e| {
+        FinalizeError(format!(
+            "Failed to open base image '{}': {e}",
+            args.base.display()
+        ))
+    })?;
+
+    let cropped = crop_image_px(&base, x, y, w, h)?;
+
+    let output_path = if let Some(path) = args.output_file.as_deref() {
+        path.to_path_buf()
+    } else {
+        generate_default_finalize_filename()
+    };
+
+    if output_path == Path::new("-") {
+        write_png_to_stdout_image(&cropped)?;
+        return Ok(());
+    }
+
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| {
+            FinalizeError(format!(
+                "Failed to create output directory '{}': {e}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    save_dynamic_image(&cropped, &output_path).map_err(|e| {
+        FinalizeError(format!(
+            "Failed to save output '{}': {e}",
+            output_path.display()
+        ))
+    })?;
+
+    Ok(())
+}
+
+fn parse_crop_px(values: &[u32]) -> Result<[u32; 4], FinalizeError> {
+    if values.len() != 4 {
+        return Err(FinalizeError(
+            "--crop-px expects exactly 4 integers: x y w h".to_string(),
+        ));
+    }
+    Ok([values[0], values[1], values[2], values[3]])
+}
+
+fn crop_image_px(
+    image: &DynamicImage,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+) -> Result<DynamicImage, FinalizeError> {
+    if w == 0 || h == 0 {
+        return Err(FinalizeError("Crop width/height must be > 0".to_string()));
+    }
+
+    let (img_w, img_h) = image.dimensions();
+    let x2 = x
+        .checked_add(w)
+        .ok_or_else(|| FinalizeError("Crop overflows".to_string()))?;
+    let y2 = y
+        .checked_add(h)
+        .ok_or_else(|| FinalizeError("Crop overflows".to_string()))?;
+
+    if x >= img_w || y >= img_h || x2 > img_w || y2 > img_h {
+        return Err(FinalizeError(format!(
+            "Crop is out of bounds: image is {img_w}x{img_h}, crop is x={x} y={y} w={w} h={h}"
+        )));
+    }
+
+    Ok(image.crop_imm(x, y, w, h))
+}
+
+fn generate_finalize_filename(ext: &str) -> String {
+    let now = Local::now();
+    let timestamp = now.format("%Y%m%d_%Hh%Mm%Ss");
+    format!("{}_hqs_final.{ext}", timestamp)
+}
+
+fn generate_default_finalize_filename() -> PathBuf {
+    // Match capture behavior request: default into current directory.
+    PathBuf::from(generate_finalize_filename("png"))
+}
+
+fn write_png_to_stdout_image(image: &DynamicImage) -> Result<(), FinalizeError> {
+    use std::io::Cursor;
+
+    let mut bytes = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .map_err(|e| FinalizeError(format!("Failed to encode PNG: {e}")))?;
+
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(&bytes)
+        .map_err(|e| FinalizeError(format!("Failed to write to stdout: {e}")))?;
+    Ok(())
+}
+
+fn save_dynamic_image(image: &DynamicImage, path: &Path) -> Result<(), image::ImageError> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+    {
+        Some(ext) if ext == "jpg" || ext == "jpeg" => {
+            use image::ColorType;
+            use image::codecs::jpeg::JpegEncoder;
+            use std::io::BufWriter;
+
+            let file = fs::File::create(path)?;
+            let mut writer = BufWriter::new(file);
+            let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
+            let rgb = image.to_rgb8();
+            encoder.encode(&rgb, rgb.width(), rgb.height(), ColorType::Rgb8.into())
+        }
+        Some(ext) if ext == "png" => image.save_with_format(path, image::ImageFormat::Png),
+        Some(ext) if ext == "ppm" || ext == "pnm" => {
+            image.save_with_format(path, image::ImageFormat::Pnm)
+        }
+        _ => image.save_with_format(path, image::ImageFormat::Png),
+    }
 }
 
 fn save_or_write_result(
