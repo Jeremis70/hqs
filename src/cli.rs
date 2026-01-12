@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "hqs")]
-#[command(about = "Minimal CLI", long_about = None, term_width = 100)]
 pub struct Cli {
     #[command(subcommand)]
     pub cmd: Cmd,
