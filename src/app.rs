@@ -1,4 +1,4 @@
-use crate::cli::{CaptureArgs, Cli, Cmd, FileType, FinalizeArgs};
+use crate::cli::{CaptureArgs, Cli, Cmd, CopyFileArgs, FileType, FinalizeArgs};
 use chrono::Local;
 use grim_rs::{Box as GrimBox, CaptureParameters, Grim};
 use image::DynamicImage;
@@ -10,6 +10,7 @@ use std::io::IsTerminal;
 use std::io::Write;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 pub fn run(cli: Cli) -> i32 {
     match cli.cmd {
@@ -21,6 +22,13 @@ pub fn run(cli: Cli) -> i32 {
             }
         },
         Cmd::Finalize(args) => match run_finalize(args) {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("Error: {err}");
+                1
+            }
+        },
+        Cmd::CopyFile(args) => match run_copy_file(args) {
             Ok(()) => 0,
             Err(err) => {
                 eprintln!("Error: {err}");
@@ -40,6 +48,57 @@ impl fmt::Display for FinalizeError {
 }
 
 impl std::error::Error for FinalizeError {}
+
+#[derive(Debug)]
+struct CopyFileError(String);
+
+impl fmt::Display for CopyFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CopyFileError {}
+
+fn run_copy_file(args: CopyFileArgs) -> Result<(), CopyFileError> {
+    let bytes = fs::read(&args.path).map_err(|e| {
+        CopyFileError(format!(
+            "Failed to read file '{}': {e}",
+            args.path.display()
+        ))
+    })?;
+
+    let mut child = Command::new("wl-copy")
+        .arg("-t")
+        .arg(&args.mime_type)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| CopyFileError(format!("Failed to spawn wl-copy: {e}")))?;
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| CopyFileError("Failed to open wl-copy stdin".to_string()))?;
+        stdin
+            .write_all(&bytes)
+            .map_err(|e| CopyFileError(format!("Failed to write to wl-copy stdin: {e}")))?;
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| CopyFileError(format!("Failed to wait for wl-copy: {e}")))?;
+
+    if !status.success() {
+        return Err(CopyFileError(format!(
+            "wl-copy exited with status: {status}"
+        )));
+    }
+
+    Ok(())
+}
 
 fn run_capture(args: CaptureArgs) -> grim_rs::Result<()> {
     let output_file = if let Some(path) = args.output_file.as_deref() {
@@ -152,6 +211,24 @@ fn run_finalize(args: FinalizeArgs) -> Result<(), FinalizeError> {
             output_path.display()
         ))
     })?;
+
+    if args.delete_base {
+        let base_path = &args.base;
+
+        // If output is the same file as base, don't delete it.
+        if output_path == *base_path {
+            return Err(FinalizeError(
+                "Refusing to delete base: output path equals base path.".to_string(),
+            ));
+        }
+
+        fs::remove_file(base_path).map_err(|e| {
+            FinalizeError(format!(
+                "Failed to delete base file '{}': {e}",
+                base_path.display()
+            ))
+        })?;
+    }
 
     Ok(())
 }

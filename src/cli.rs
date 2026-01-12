@@ -23,6 +23,12 @@ pub enum Cmd {
         after_help = "If output-file is '-', output to standard output.\nIf no output-file is specified, use a default timestamped filename.\n\nExamples:\n  hqs finalize --base shot.png --crop-px 0 0 200 200 out.png\n  hqs finalize --base shot.png --crop-px 10 10 800 600 - | wl-copy -t image/png"
     )]
     Finalize(FinalizeArgs),
+
+    #[command(
+        about = "Copy a file to the Wayland clipboard via wl-copy",
+        after_help = "Example:\n  hqs copy-file --type image/png ./image.png"
+    )]
+    CopyFile(CopyFileArgs),
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
@@ -115,6 +121,22 @@ pub struct FinalizeArgs {
     )]
     pub crop_px: Vec<u32>,
 
+    #[arg(long, help = "Delete the base file after a successful finalize.")]
+    pub delete_base: bool,
+
     #[arg(value_name = "output-file")]
     pub output_file: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct CopyFileArgs {
+    #[arg(
+        long = "type",
+        value_name = "mime",
+        help = "MIME type passed to wl-copy (-t)."
+    )]
+    pub mime_type: String,
+
+    #[arg(value_name = "path", help = "File to copy.")]
+    pub path: PathBuf,
 }
