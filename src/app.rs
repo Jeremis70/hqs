@@ -19,8 +19,8 @@ pub fn run(cli: Cli) -> i32 {
 }
 
 fn run_capture(args: CaptureArgs) -> grim_rs::Result<()> {
-    let output_file = if let Some(ref path) = args.output_file {
-        path.clone()
+    let output_file = if let Some(path) = args.output_file.as_deref() {
+        path.to_path_buf()
     } else {
         generate_default_filename(args.filetype)?
     };
@@ -52,26 +52,32 @@ fn run_capture(args: CaptureArgs) -> grim_rs::Result<()> {
     };
 
     let result = if let Some(ref output_name) = args.output {
-        if args.cursor {
-            let mut params = CaptureParameters::new(output_name.clone()).overlay_cursor(true);
-            if let Some(region) = region {
-                params = params.region(region);
-            }
-            if let Some(scale) = args.scale {
-                params = params.scale(scale);
-            }
+        if let Some(region) = region {
+            let mut params =
+                CaptureParameters::new(output_name.clone()).overlay_cursor(args.cursor);
+            params = params.region(region);
 
             let multi_result = grim.capture_outputs_with_scale(vec![params], default_scale)?;
-            if let Some(capture_result) = multi_result.get(output_name) {
-                capture_result.clone()
-            } else {
-                return Err(grim_rs::Error::OutputNotFound(output_name.clone()));
-            }
+            multi_result
+                .get(output_name)
+                .cloned()
+                .ok_or_else(|| grim_rs::Error::OutputNotFound(output_name.clone()))?
         } else {
-            grim.capture_output_with_scale(output_name, default_scale)?
+            // Output complet : utiliser l'API dédiée (fix bug noir + mauvais scale)
+            if args.cursor {
+                grim.capture_output_with_scale_and_cursor(output_name, default_scale, true)?
+            } else {
+                grim.capture_output_with_scale(output_name, default_scale)?
+            }
         }
     } else if let Some(region) = region {
-        grim.capture_region_with_scale(region, default_scale)?
+        if args.cursor {
+            grim.capture_region_with_scale_and_cursor(region, default_scale, true)?
+        } else {
+            grim.capture_region_with_scale(region, default_scale)?
+        }
+    } else if args.cursor {
+        grim.capture_all_with_scale_and_cursor(default_scale, true)?
     } else {
         grim.capture_all_with_scale(default_scale)?
     };
@@ -82,10 +88,10 @@ fn run_capture(args: CaptureArgs) -> grim_rs::Result<()> {
 fn save_or_write_result(
     grim: &Grim,
     result: &grim_rs::CaptureResult,
-    output_file: &str,
+    output_file: &Path,
     args: &CaptureArgs,
 ) -> grim_rs::Result<()> {
-    if output_file == "-" {
+    if output_file == Path::new("-") {
         write_to_stdout(grim, result, args)
     } else {
         save_to_file(grim, result, output_file, args)
@@ -107,14 +113,13 @@ fn write_to_stdout(
 fn save_to_file(
     grim: &Grim,
     result: &grim_rs::CaptureResult,
-    output_file: &str,
+    output_file: &Path,
     args: &CaptureArgs,
 ) -> grim_rs::Result<()> {
-    let path = Path::new(output_file);
     match args.filetype {
-        FileType::Png => save_png_to_file(grim, result, path, args.level),
-        FileType::Ppm => grim.save_ppm(result.data(), result.width(), result.height(), path),
-        FileType::Jpeg => save_jpeg_to_file(grim, result, path, args.quality),
+        FileType::Png => save_png_to_file(grim, result, output_file, args.level),
+        FileType::Ppm => grim.save_ppm(result.data(), result.width(), result.height(), output_file),
+        FileType::Jpeg => save_jpeg_to_file(grim, result, output_file, args.quality),
     }
 }
 
@@ -190,7 +195,7 @@ fn save_jpeg_to_file(
     }
 }
 
-fn generate_default_filename(filetype: FileType) -> grim_rs::Result<String> {
+fn generate_default_filename(filetype: FileType) -> grim_rs::Result<PathBuf> {
     // Format: YYYYMMDD_HHhMMmSSs_hqs.ext (e.g., 20241004_10h30m45s_hqs.png)
     let now = Local::now();
     let timestamp = now.format("%Y%m%d_%Hh%Mm%Ss");
@@ -203,7 +208,7 @@ fn generate_default_filename(filetype: FileType) -> grim_rs::Result<String> {
 
     let output_dir = get_output_dir();
     let filename = format!("{}_hqs.{}", timestamp, ext);
-    Ok(output_dir.join(filename).to_string_lossy().to_string())
+    Ok(output_dir.join(filename))
 }
 
 /// ~/.config/user-dirs.dirs

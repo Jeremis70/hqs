@@ -538,7 +538,7 @@ dependencies = [
 [[package]]
 name = "grim-rs"
 version = "0.1.3"
-source = "git+https://github.com/Jeremis70/grim-rs#4cf1ba7f774d2bfd845a4670f5c5a5cb545d61c3"
+source = "git+https://github.com/Jeremis70/grim-rs#c713543be2de7f666421e3c8b9ee5abf563f54f1"
 dependencies = [
  "anyhow",
  "chrono",

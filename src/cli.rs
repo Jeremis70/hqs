@@ -1,5 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fmt;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "hqs")]
@@ -22,6 +23,7 @@ pub enum Cmd {
 pub enum FileType {
     Png,
     Ppm,
+    #[value(alias = "jpg")]
     Jpeg,
 }
 
@@ -41,7 +43,7 @@ pub struct CaptureArgs {
     #[arg(
         short = 's',
         value_name = "factor",
-        help = "Set the output image's scale factor."
+        help = "Set the output image's scale factor. Defaults to the greatest output scale factor."
     )]
     pub scale: Option<f64>,
 
@@ -54,7 +56,7 @@ pub struct CaptureArgs {
 
     #[arg(
         short = 't',
-        value_name = "png|ppm|jpeg",
+        value_name = "png|ppm|jpeg|jpg",
         default_value_t = FileType::Png,
         hide_possible_values = true,
         help = "Set the output filetype."
@@ -86,16 +88,9 @@ pub struct CaptureArgs {
     )]
     pub output: Option<String>,
 
-    #[arg(
-        short = 'T',
-        value_name = "identifier",
-        help = "Set the identifier of a foreign toplevel handle to capture."
-    )]
-    pub toplevel: Option<String>,
-
     #[arg(short = 'c', help = "Include cursors in the screenshot.")]
     pub cursor: bool,
 
     #[arg(value_name = "output-file")]
-    pub output_file: Option<String>,
+    pub output_file: Option<PathBuf>,
 }
